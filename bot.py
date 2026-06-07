@@ -1,3 +1,4 @@
+import os
 import logging
 import requests
 from bs4 import BeautifulSoup
@@ -13,6 +14,10 @@ from telegram.ext import (
     ContextTypes,
     ConversationHandler
 )
+from dotenv import load_dotenv
+
+# Load local environment variables if present (used for local testing)
+load_dotenv()
 
 # Enable logging
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
@@ -140,7 +145,7 @@ async def browse_singers(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = []
     for i, s in enumerate(page_singers):
         global_idx = start_idx + i
-        keyboard.append([InlineKeyboardButton(s['display'], callback_data=f"select_singer_{global_idx}_0")]) # Notice the trailing _0 for page 0 of songs!
+        keyboard.append([InlineKeyboardButton(s['display'], callback_data=f"select_singer_{global_idx}_0")])
     
     nav_row = []
     if page > 0:
@@ -176,7 +181,7 @@ async def process_singer_search(update: Update, context: ContextTypes.DEFAULT_TY
     keyboard = []
     for s in matches[:8]: 
         global_idx = scraper.singers.index(s)
-        keyboard.append([InlineKeyboardButton(s['display'], callback_data=f"select_singer_{global_idx}_0")]) # Starts song list at page 0
+        keyboard.append([InlineKeyboardButton(s['display'], callback_data=f"select_singer_{global_idx}_0")])
         
     keyboard.append([InlineKeyboardButton("🏠 Main Menu", callback_data="main_menu")])
     
@@ -186,23 +191,19 @@ async def process_singer_search(update: Update, context: ContextTypes.DEFAULT_TY
 # --- SONGS WITH PAGINATION & LYRICS ---
 
 async def handle_singer_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Triggered when user clicks an artist or changes song pages. Includes pagination."""
     query = update.callback_query
     await query.answer()
     
-    # Callback format: select_singer_[global_singer_idx]_[song_page_idx]
     data_parts = query.data.split("_")
     singer_idx = int(data_parts[2])
     song_page = int(data_parts[3])
     
     singer = scraper.singers[singer_idx]
     
-    # Avoid scraping songs repeatedly if they are already in the session cache for this specific artist
     cached_singer_idx = context.user_data.get('cached_singer_idx')
     if cached_singer_idx == singer_idx and 'current_songs' in context.user_data:
         songs = context.user_data['current_songs']
     else:
-        # Show status message if it's a fresh fetch
         await query.message.edit_text(f"⏳ Fetching songs for {singer['display']}...")
         songs = scraper.get_singer_songs(singer['path'])
         context.user_data['current_songs'] = songs
@@ -213,7 +214,6 @@ async def handle_singer_selection(update: Update, context: ContextTypes.DEFAULT_
                                       reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Main Menu", callback_data="main_menu")]]))
         return
 
-    # Song Pagination configs (Show 10 songs per page)
     per_page = 10
     start_idx = song_page * per_page
     end_idx = start_idx + per_page
@@ -221,11 +221,9 @@ async def handle_singer_selection(update: Update, context: ContextTypes.DEFAULT_
     
     keyboard = []
     for i, song in enumerate(page_songs):
-        # Store global song index in button callback
         global_song_idx = start_idx + i
         keyboard.append([InlineKeyboardButton(song['name'], callback_data=f"get_lyrics_{global_song_idx}")])
         
-    # Song Navigation Controls
     nav_row = []
     if song_page > 0:
         nav_row.append(InlineKeyboardButton("⬅️ Prev Songs", callback_data=f"select_singer_{singer_idx}_{song_page-1}"))
@@ -260,7 +258,6 @@ async def handle_lyrics_request(update: Update, context: ContextTypes.DEFAULT_TY
     
     lyrics = scraper.get_lyrics(song['path'])
     
-    # Back button points back to page 0 of the song selection dynamically
     keyboard = [
         [InlineKeyboardButton(f"🔙 Back to Songs", callback_data=f"select_singer_{singer_idx}_0")],
         [InlineKeyboardButton("🏠 Main Menu", callback_data="main_menu")]
@@ -274,11 +271,15 @@ async def handle_lyrics_request(update: Update, context: ContextTypes.DEFAULT_TY
     else:
         await query.message.reply_text(f"📋 **{song['name']}**\n\n{lyrics}", reply_markup=InlineKeyboardMarkup(keyboard))
 
-
 # --- MAIN ORCHESTRATOR ---
 def main():
-    TOKEN = '8613914625:AAFJJTaiQtyywnIaHYmy-4I5AscNum4iXJY'
+    # Safely pull the token injected by Railway or your local .env file
+    TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
     
+    if not TOKEN:
+        logging.critical("CRITICAL ERROR: TELEGRAM_BOT_TOKEN environment variable is completely missing!")
+        return
+
     application = Application.builder().token(TOKEN).build()
     
     search_conv = ConversationHandler(
